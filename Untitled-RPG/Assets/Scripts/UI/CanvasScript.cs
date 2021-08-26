@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using DG.Tweening;
+using NaughtyAttributes;
 
 public class CanvasScript : MonoBehaviour
 {
@@ -25,18 +27,29 @@ public class CanvasScript : MonoBehaviour
     public TextMeshProUGUI enemyName;
     public TextMeshProUGUI enemyHealth;
 
-    [Header("Middle Skill Panel")]
+    [Header("Skillpanel")]
+    public CanvasGroup skillpanel;
     public UI_MiddleSkillPanelButtons LMB;
     public UI_MiddleSkillPanelButtons RMB;
     public Sprite cancelSprite;
 
     [Header("Quick access menu")]
+    [DisplayWithoutEdit] public bool isQuickAccessMenuOpen;
     public QuickAccessMenu quickAccessMenu;
-    [DisplayWithoutEdit] public bool quickAccessMenuIsOpen;
     float quickAccessMenuTimer;
 
-
     Characteristics characteristics;
+
+    public bool ShowSkillpanel {
+        get {
+            return skillpanel.alpha > 0.9f;
+        }
+        set {
+            if (value) FadeinSkillpanel();
+            else FadeoutSkillpanel();
+        }
+    }
+
 
     void Awake() {
         if (instance == null) 
@@ -65,11 +78,34 @@ public class CanvasScript : MonoBehaviour
     void DisplayHPandStamina () {
         healthBar.fillAmount = Mathf.Lerp(healthBar.fillAmount, (float)characteristics.health/characteristics.maxHealth, Time.deltaTime * 10);
         healthBar.transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = characteristics.health.ToString();
-        staminaFillAmount = characteristics.maxStamina == 0 ? 0 : Mathf.Lerp(staminaFillAmount, (float)characteristics.stamina/characteristics.maxStamina, Time.deltaTime * 10);
 
+        if (!PlayerControlls.instance.isMounted) DisplayPlayerStamina();
+        else DisplayMountStamina();
+    }
+    void DisplayPlayerStamina () {
+        staminaFillAmount = characteristics.maxStamina == 0 ? 0 : Mathf.Lerp(staminaFillAmount, (float)characteristics.stamina/characteristics.maxStamina, Time.deltaTime * 10);
         StaminaBarPosition();
 
         if (!Characteristics.instance.canUseStamina) {
+            if (staminaColorLerp < 1)
+                staminaColorLerp += Time.deltaTime * 10;
+        } else {
+            if (staminaColorLerp > 0)
+                staminaColorLerp -= Time.deltaTime * 10;
+        }
+        staminaColorLerp = Mathf.Clamp01(staminaColorLerp);
+        staminaFillAmount = Mathf.Clamp01(staminaFillAmount);
+        
+        staminaBar.material.SetFloat("_ColorLerp", staminaColorLerp);
+        staminaBar.material.SetFloat("_FillAmount", staminaFillAmount);
+    }
+    void DisplayMountStamina () {
+        MountController mountController = PlayerControlls.instance.rider.MountStored.Animal.GetComponent<MountController>();
+        
+        staminaFillAmount = mountController.totalMaxStamina == 0 ? 0 : Mathf.Lerp(staminaFillAmount, (float)mountController.currentStamina/mountController.totalMaxStamina, Time.deltaTime * 10);
+        StaminaBarMountedPosition();
+
+        if (!PlayerControlls.instance.rider.MountStored.Animal.UseSprint) {
             if (staminaColorLerp < 1)
                 staminaColorLerp += Time.deltaTime * 10;
         } else {
@@ -86,6 +122,12 @@ public class CanvasScript : MonoBehaviour
     void StaminaBarPosition () {
         Vector3 currentPos = staminaBar.transform.GetComponent<RectTransform>().anchoredPosition;
         Vector2 desPos = Camera.main.WorldToScreenPoint(PlayerControlls.instance.transform.position + PlayerControlls.instance.playerCamera.transform.right * 0.5f + Vector3.up * 1.2f);
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(GetComponent<RectTransform>(), desPos, PeaceCanvas.instance.UICamera, out desPos);
+        staminaBar.transform.GetComponent<RectTransform>().anchoredPosition = Vector3.Lerp(currentPos, desPos, 10 * Time.deltaTime);
+    }
+    void StaminaBarMountedPosition () {
+        Vector3 currentPos = staminaBar.transform.GetComponent<RectTransform>().anchoredPosition;
+        Vector2 desPos = Camera.main.WorldToScreenPoint(PlayerControlls.instance.rider.MountStored.transform.position + PlayerControlls.instance.rider.MountStored.transform.right * 0.7f + Vector3.up * 1.2f);
         RectTransformUtility.ScreenPointToLocalPointInRectangle(GetComponent<RectTransform>(), desPos, PeaceCanvas.instance.UICamera, out desPos);
         staminaBar.transform.GetComponent<RectTransform>().anchoredPosition = Vector3.Lerp(currentPos, desPos, 10 * Time.deltaTime);
     }
@@ -197,20 +239,20 @@ public class CanvasScript : MonoBehaviour
     }
 
     void OpenQuickAccessMenu(){
-        if (PeaceCanvas.instance.anyPanelOpen || Time.time - quickAccessMenuTimer < 0.5f || quickAccessMenuIsOpen)
+        if (PeaceCanvas.instance.anyPanelOpen || Time.time - quickAccessMenuTimer < 0.5f || isQuickAccessMenuOpen)
             return;
 
         quickAccessMenuTimer = Time.time;
         quickAccessMenu.gameObject.SetActive(true);
         PlayerControlls.instance.cameraControl.stopInput = true;
-        quickAccessMenuIsOpen = true;
+        isQuickAccessMenuOpen = true;
     }
     public void CloseQuickAccessMenu () {
-        if (!quickAccessMenuIsOpen)
+        if (!isQuickAccessMenuOpen)
             return;
             
         PlayerControlls.instance.cameraControl.stopInput = false;
-        quickAccessMenuIsOpen = false;
+        isQuickAccessMenuOpen = false;
         quickAccessMenu.Close();
     }
 
@@ -224,5 +266,14 @@ public class CanvasScript : MonoBehaviour
         }
         rowNumberLeftLabel.text = (Combat.instanace.currentSkillSlotsRow + 1).ToString();
         rowNumberRightLabel.text = (Combat.instanace.currentSkillSlotsRow + 1).ToString();
+    }
+
+    void FadeoutSkillpanel (float duration = 1) {
+        if (duration <= 0) skillpanel.alpha = 0;
+        else skillpanel.DOFade(0, duration);
+    }
+    void FadeinSkillpanel (float duration = 1) {
+        if (duration <= 0) skillpanel.alpha = 1;
+        else skillpanel.DOFade(1, duration);
     }
 }

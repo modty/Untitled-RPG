@@ -4,6 +4,8 @@ using UnityEngine;
 using Cinemachine;
 using ECM.Controllers;
 using UnityEngine.SceneManagement;
+using MalbersAnimations.HAP;
+using NaughtyAttributes;
 
 public class PlayerControlls : MonoBehaviour, ISavable
 {
@@ -14,21 +16,21 @@ public class PlayerControlls : MonoBehaviour, ISavable
     public bool toggleRunning = false;
     public int staminaReqToRoll = 50;
 
-    [Header("State")]
-    public bool isIdle;
-    public bool isRunning;
-    public bool isSprinting;
-    public bool isCrouch;
-    public bool isJumping;
-    public bool isRolling;
-    public bool isMounted;
-    public bool isAttacking;
-    public bool isGettingHit;
-    public bool isGrounded;
-    public bool isCasting;
-    public bool isFlying;
-    public bool isPickingArea;
-    public bool isAimingSkill;
+    [Foldout("States"), ReadOnly] public bool isIdle;
+    [Foldout("States"), ReadOnly] public bool isRunning;
+    [Foldout("States"), ReadOnly] public bool isSprinting;
+    [Foldout("States"), ReadOnly] public bool isCrouch;
+    [Foldout("States"), ReadOnly] public bool isJumping;
+    [Foldout("States"), ReadOnly] public bool isRolling;
+    [Foldout("States"), ReadOnly] public bool isMounted;
+    [Foldout("States"), ReadOnly] public bool isAttacking;
+    [Foldout("States"), ReadOnly] public bool isGettingHit;
+    [Foldout("States"), ReadOnly] public bool isGrounded;
+    [Foldout("States"), ReadOnly] public bool isCasting;
+    [Foldout("States"), ReadOnly] public bool isFlying;
+    [Foldout("States"), ReadOnly] public bool isPickingArea;
+    [Foldout("States"), ReadOnly] public bool isAimingSkill;
+
     [Space]
     public bool isSitting;
     [Header("Battle")]
@@ -39,8 +41,17 @@ public class PlayerControlls : MonoBehaviour, ISavable
 
     [Space]
     public bool castInterrupted;
+    public bool disableControl {
+        get {
+            return disableControlRequests > 0;
+        }
+    }
     [Space]
-    public bool disableControl;
+    public int disableControlRequests;
+    [SerializeField, DisplayWithoutEdit] bool overridePosRot;
+    [SerializeField, ReadOnly, ShowIf("overridePosRot")] Vector3 overridePos;
+    [SerializeField, ReadOnly, ShowIf("overridePosRot")] float overrideRotAngle;
+    Transform overrideTransform;
 
     float sprintingDirection;
     float desiredSprintingDirection;
@@ -51,8 +62,10 @@ public class PlayerControlls : MonoBehaviour, ISavable
     float rollDirection;
     float desiredRollDirection;
 
-    [System.NonSerialized] public Rigidbody rb;
+
+    [System.NonSerialized] public MRider rider;
     [System.NonSerialized] public Camera playerCamera;
+    [System.NonSerialized] public Rigidbody rb;
     [System.NonSerialized] public CameraControll cameraControl;
     [System.NonSerialized] public CinemachineFreeLook CM_Camera;
     [System.NonSerialized] public PlayerAudioController audioController;
@@ -75,28 +88,32 @@ public class PlayerControlls : MonoBehaviour, ISavable
 
     SittingSpot currentSittingSpot;
 
-    public bool upperBodyLayerAnimRest;
-    public bool layerAnimRest;
-    public bool treeAnimRest;
-    public bool upperBodyTreeAnimRest;
+    [Foldout("Animation states")] public bool upperBodyLayerAnimRest;
+    [Foldout("Animation states")] public bool layerAnimRest;
+    [Foldout("Animation states")] public bool treeAnimRest;
+    [Foldout("Animation states")] public bool upperBodyTreeAnimRest;
+
+    float startedHoldingKeyTime;
+    bool holdingButton;
 
     void Awake() {
         if (instance == null) 
             instance = this;
-    }
-
-    void Start()
-    {
+        
+        rider = GetComponent<MRider>();
         animator = GetComponent<Animator>();
         audioController = GetComponent<PlayerAudioController>();
         characterController = GetComponent<PlayerCharacterController>();
         rb = GetComponent<Rigidbody>();
-
+        
         playerCamera = Camera.main;
-        CM_Camera = playerCamera.GetComponent<CameraControll>().CM_cam;
         cameraControl = playerCamera.GetComponent<CameraControll>();
-        walkSpeed = Characteristics.instance.walkSpeed;
+        CM_Camera = playerCamera.GetComponent<CameraControll>().CM_cam;
+    }
 
+    void Start()
+    {
+        walkSpeed = Characteristics.instance.walkSpeed;
         SaveManager.instance.saveObjects.Add(this);
     }
 
@@ -104,6 +121,7 @@ public class PlayerControlls : MonoBehaviour, ISavable
     {
         isGrounded = characterController.isGrounded; //IsGrounded(); LEGACY
         isJumping = characterController.isJumping;
+        isMounted = rider.Mounted;
 
         if (!isMounted && !isFlying && !disableControl) {
             GroundMovement();
@@ -120,6 +138,8 @@ public class PlayerControlls : MonoBehaviour, ISavable
 
         if (Input.GetKeyDown(KeybindsManager.instance.currentKeyBinds["Toggle walk"]))
             toggleRunning = !toggleRunning;
+
+        MountingInput();
 
         if ( (!Input.GetButton("Horizontal") && !Input.GetButton("Vertical") && !isAttacking) || isSitting) {
             isIdle = true;
@@ -149,6 +169,31 @@ public class PlayerControlls : MonoBehaviour, ISavable
             lookDirection = desiredLookDirection;
         }
 
+    }
+    
+    void MountingInput () {
+        if (isFlying) return;
+        if (Input.GetKeyDown(KeybindsManager.instance.currentKeyBinds["Interact"])) {
+            if (!isMounted) {
+                holdingButton = false;
+                rider.MountAnimal();
+                SprintOff();
+            } else {
+                startedHoldingKeyTime = Time.time;
+                holdingButton = true; 
+                PeaceCanvas.instance.ShowKeySuggestion(KeyCodeDictionary.keys[KeybindsManager.instance.currentKeyBinds["Interact"]], InterractionIcons.Horse);
+            }
+        }
+        if (Input.GetKeyUp(KeybindsManager.instance.currentKeyBinds["Interact"])){
+            holdingButton = false;
+            PeaceCanvas.instance.HideKeySuggestion();
+        }
+        if (Time.time - startedHoldingKeyTime > 0.5f && isMounted && holdingButton) {
+            rider.DismountAnimal();
+            holdingButton = false;
+            PeaceCanvas.instance.HideKeySuggestion();
+        }
+        if (holdingButton) PeaceCanvas.instance.UpdateKeySuggestionProgress( (Time.time - startedHoldingKeyTime) / 0.5f );
     }
 
 #region Ground movement
@@ -225,20 +270,56 @@ public class PlayerControlls : MonoBehaviour, ISavable
     }
 
     void UpdateRotation () {
+        
+        if (rider.IsMountingDismounting) {
+            desiredLookDirection = transform.eulerAngles.y;
+            return;
+        } 
+
         transform.eulerAngles = new Vector3(transform.eulerAngles.x, lookDirection + sprintingDirection + rollDirection, transform.eulerAngles.z);
         
         if ( (!PeaceCanvas.instance.anyPanelOpen && !isIdle) || cameraControl.isAiming || cameraControl.isShortAiming) { 
             desiredLookDirection = CM_Camera.m_XAxis.Value; //rotate player with camera, unless idle, aiming, or in inventory
         }
 
-        if (isSitting) {
-            desiredSprintingDirection = 0;
-            desiredRollDirection = 0;
-            transform.position = Vector3.MoveTowards(transform.position, currentSittingSpot.transform.position, Time.deltaTime * 7f);
-            desiredLookDirection = currentSittingSpot.transform.eulerAngles.y;
-        }
+        if (overridePosRot) SetOverridePosRot();
     }
 
+    void SetOverridePosRot() {
+        desiredSprintingDirection = 0;
+        desiredRollDirection = 0;
+        transform.position = Vector3.MoveTowards(transform.position, overrideTransform ? overrideTransform.position : overridePos, Time.deltaTime * 7f);
+        desiredLookDirection = overrideTransform ? overrideTransform.rotation.eulerAngles.y : overrideRotAngle;
+    }
+
+    public void OverridePosRot (bool _enableOverride) {
+        OverridePosRot(_enableOverride, transform.position, transform.rotation.eulerAngles.y);
+    }
+    public void OverridePosRot (Vector3 _overridePos) {
+        OverridePosRot(true, _overridePos, transform.rotation.eulerAngles.y);
+    }
+    public void OverridePosRot (float _overrideYRot) {
+        OverridePosRot(true, transform.position, _overrideYRot);
+    }
+    public void OverridePosRot (Vector3 _overridePos, float _overrideYRot) {
+        OverridePosRot(true, _overridePos, _overrideYRot);
+    }
+    public void OverridePosRot (Transform posRotTransform) {
+        OverridePosRot(true, posRotTransform);
+    }
+    
+    void OverridePosRot (bool _enableOverride, Vector3 _overridePos, float _overrideYRot) {
+        overridePosRot = _enableOverride;
+        overridePos = _overridePos;
+        overrideRotAngle = _overrideYRot;
+        overrideTransform = null;
+    }
+    void OverridePosRot (bool _enableOverride, Transform _overrideTransform) {
+        overridePosRot = _enableOverride;
+        overridePos = Vector3.zero;
+        overrideRotAngle = 0;
+        overrideTransform = _overrideTransform;
+    }
 
     //Animation variables
     float InputDirection;
@@ -492,6 +573,7 @@ public class PlayerControlls : MonoBehaviour, ISavable
         spot.isTaken = true;
         timeSat = Time.time;
         currentSittingSpot = spot;
+        OverridePosRot(currentSittingSpot.transform.position, currentSittingSpot.transform.eulerAngles.y);
     }
     public void Unsit(SittingSpot spot) {
         if (Time.time-timeSat < 2)
@@ -499,6 +581,7 @@ public class PlayerControlls : MonoBehaviour, ISavable
         isSitting = false;
         spot.isTaken = false;
         currentSittingSpot = null;
+        OverridePosRot(false);
     }
 
     void PushEnemies() {

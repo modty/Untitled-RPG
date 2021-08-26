@@ -46,6 +46,8 @@ public class CameraControll : MonoBehaviour
     CamSettings currentCamSettings = CamSettings.Smooth;
     CinemachineImpulseSource impulseSource;
 
+    CinemachineFreeLook CM_mounted;
+
     void Awake() {
         instance = this;
 
@@ -86,11 +88,38 @@ public class CameraControll : MonoBehaviour
         }
         
         CheckCameraUnderRoof();
+
+        if (Input.GetKeyDown(KeybindsManager.instance.currentKeyBinds["Free camera"])) {
+            ToggleFreeCamera();
+        }
+    }
+
+    void ToggleFreeCamera() {
+        Quaternion rot = transform.rotation;
+        CinemachineBrain CM_brain = GetComponent<CinemachineBrain>();
+        FreeCameraController freeCam = GetComponent<FreeCameraController>();
+
+        CM_brain.enabled = !CM_brain.enabled;
+        freeCam.enabled = !freeCam.enabled;
+
+        PlayerControlls.instance.disableControlRequests += freeCam.enabled ? 1 : -1;
     }
 
     void UpdateMouseSettings() {
         baseMouseXsensitivity = SettingsManager.instance.mouseSensitivity * 0.03f;
         baseMouseYsensitivity = SettingsManager.instance.mouseSensitivity * 0.0002f;
+        CM_cam.m_YAxis.m_InvertInput = !SettingsManager.instance.invertY;
+
+        if (PlayerControlls.instance.isMounted) MatchMountCameraSettings();
+        else CM_mounted = null;
+    }
+    void MatchMountCameraSettings(){
+        if (CM_mounted == null) CM_mounted = PlayerControlls.instance.rider.Montura.Animal.GetComponentInChildren<CinemachineFreeLook>();
+        MatchCameraSettings (ref CM_mounted);
+    }
+    public void MatchCameraSettings (ref CinemachineFreeLook CM_cam) {
+        CM_cam.m_XAxis.m_MaxSpeed = baseMouseXsensitivity;
+        CM_cam.m_YAxis.m_MaxSpeed = baseMouseYsensitivity;
         CM_cam.m_YAxis.m_InvertInput = !SettingsManager.instance.invertY;
     }
 

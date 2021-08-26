@@ -47,6 +47,8 @@ public class Tooltip : MonoBehaviour
         itemStats.text = generateItemStats(focusItem, compareItem);
         leftBottomLabel.text = "";
 
+        CheckForSpecialFrame();
+
         int grantedSkillHeight = 0;
         grantedSkillIcon.gameObject.SetActive(false);
         if (focusItem is Equipment) {
@@ -70,15 +72,29 @@ public class Tooltip : MonoBehaviour
         GetComponent<RectTransform>().sizeDelta = new Vector2(360, tooltipHeight);
     }
 
+    void CheckForSpecialFrame () {
+        if (focusItem.specialFrameMat) {
+            RectTransform specialFrame = new GameObject().AddComponent<RectTransform>();
+            specialFrame.SetParent(itemIcon.transform);
+            specialFrame.anchoredPosition3D = Vector3.zero;
+            specialFrame.localScale = Vector2.one;
+            specialFrame.anchorMin = Vector2.zero;
+            specialFrame.anchorMax = Vector2.one;
+            specialFrame.offsetMin = Vector2.zero;
+            specialFrame.offsetMax = Vector2.zero;
+            specialFrame.gameObject.AddComponent<Image>().material = focusItem.specialFrameMat;
+        }
+    }
+
     string generateItemStats (Item item, Item compareItem) {
         string stats = "";
         string highlightColor = "#" + ColorUtility.ToHtmlStringRGBA(UI_General.highlightTextColor);
         if (item is Consumable) {
             Consumable c = (Consumable)item;
             if (c.consumableType == ConsumableType.Health) {
-                stats = $"Restores around <color={highlightColor}> +{c.effectAmount.ToString()}</color> health\n"; 
+                stats = $"Restores around <color={highlightColor}>{c.effectAmount.ToString()}</color> health\n"; 
             } else if (c.consumableType == ConsumableType.Stamina) {
-                stats = $"Restores around <color={highlightColor}> +{c.effectAmount.ToString()}</color> stamina\n";
+                stats = $"Restores around <color={highlightColor}>{c.effectAmount.ToString()}</color> stamina\n";
             }
             if(c.cooldownTime > 0)
                 stats += $"\nCool down: <color={highlightColor}>{c.cooldownTime.ToString()}</color> seconds";
@@ -178,6 +194,31 @@ public class Tooltip : MonoBehaviour
             stats = Combat.instanace.learnedSkills.Contains(AssetHolder.instance.getSkill(sb.learnedSkill.ID)) ? "<color=red>You already know this skill" : "";
         } else if (item is Resource) {
             // do nothing;
+        } else if (item is Mount) {
+            Mount m = (Mount)item;
+            Mount mCompare = (Mount)compareItem;
+            bool compare = compareItem != null ? true : false;
+            string compareText = "";
+            
+            compareText = compare ? $"{getCompareString(m.movementSpeed, mCompare.movementSpeed)}" : "";
+            stats += $"Movement speed: <color={highlightColor}>{m.movementSpeed}</color>{compareText}\n";
+
+            compareText = compare ? $"{getCompareString(m.maxStamina, mCompare.maxStamina)}" : "";
+            stats += $"Stamina: <color={highlightColor}>{m.maxStamina}{compareText}</color>";
+        } else if (item is MountEquipment) {
+            MountEquipment m = (MountEquipment)item;
+            MountEquipment mCompare = (MountEquipment)compareItem;
+            bool compare = compareItem != null ? true : false;
+            string compareText = "";
+            
+            if (m.movementSpeed != 0) {
+                compareText = compare ? $"{getCompareString(m.movementSpeed, mCompare.movementSpeed)}" : "";
+                stats += $"Movement speed: <color={highlightColor}>{m.movementSpeed}</color>{compareText}\n";
+            }
+            if (m.stamina != 0) {
+                compareText = compare ? $"{getCompareString(m.stamina, mCompare.stamina)}" : "";
+                stats += $"Stamina: <color={highlightColor}>{m.stamina}{compareText}</color>";
+            }
         } else {
             stats = "NOT IMPLEMENTED";
         }

@@ -196,6 +196,12 @@ public class Combat : MonoBehaviour, ISavable
             case 26: 
                 skill.GetComponent<ShieldSlam>().Hit(skillID.floatParameter);
                 break;
+            case 31: 
+                skill.GetComponent<HelpingHand>().Heal();
+                break;
+            case 32: 
+                skill.GetComponent<LifeSupport>().AddRecurringEffect();
+                break;
             case 101: 
                 if (skillID.floatParameter == 0) 
                     skill.GetComponent<CaptainThrow>().ThrowShield();

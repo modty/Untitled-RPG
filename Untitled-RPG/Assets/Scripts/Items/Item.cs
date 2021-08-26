@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using UnityEngine;
+﻿using UnityEngine;
 
 [System.Serializable]
 public struct CraftingObject {
@@ -17,6 +16,7 @@ public abstract class Item : ScriptableObject
     public int maxStackAmount = 100;
     public Sprite itemIcon;
     public GameObject lootPrefab;
+    public Material specialFrameMat;
     [Space]
     public int itemBasePrice;
     public bool overridePrice;
