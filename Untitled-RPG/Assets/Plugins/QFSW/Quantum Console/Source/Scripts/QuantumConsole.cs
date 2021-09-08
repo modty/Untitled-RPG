@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 namespace QFSW.QC
 {
@@ -148,6 +149,10 @@ namespace QFSW.QC
 
         private readonly Type _voidTaskType = typeof(Task<>).MakeGenericType(Type.GetType("System.Threading.Tasks.VoidTaskResult"));
 
+        public void ToggleVisibility(bool show = true) {
+            _containerRect.gameObject.SetActive(show);
+        }
+
         /// <summary>Applies a theme to the Quantum Console.</summary>
         /// <param name="theme">The desired theme to apply.</param>
         public void ApplyTheme(QuantumTheme theme, bool forceRefresh = false)
@@ -246,6 +251,22 @@ namespace QFSW.QC
                     ProcessAutocomplete();
                 }
             }
+
+            CheckForEventSystem(); //Finale
+        }
+
+        [SerializeField] bool checkForEventSystem = true;
+        void CheckForEventSystem() { //Finale
+            if (!checkForEventSystem) return;
+
+            if (!UnityEngine.EventSystems.EventSystem.current) {
+                EventSystem newEventSystem = new GameObject().AddComponent<EventSystem>();
+                newEventSystem.name = "QCEmergencyEventSystem";
+                newEventSystem.gameObject.AddComponent<StandaloneInputModule>();
+                Debug.LogWarning($"Quantum console failed to detect an event system. This should not happen. Created a new {newEventSystem.name.ColorText(Theme.DefaultReturnValueColor)} (EventSystem) to keep control of the console.");
+                Debug.LogWarning($"If you don't want Quantum Console to automaticly create emergency event systems, set QuantomConsole.checkForEventSystem to false.");
+            }
+
         }
 
 
@@ -322,15 +343,7 @@ namespace QFSW.QC
                     _selectedSuggestionCommandIndex %= _suggestedCommands.Count;
                     SetCommandSuggestion(_selectedSuggestionCommandIndex);
                 }
-                //Added by Finale
-                _consoleInput.MoveToEndOfLine(false, true); 
             }
-
-            //---Added by Finale---//
-            if (_keyConfig.AutocompleteKey.IsPressed() && !string.IsNullOrWhiteSpace(_currentText) && _selectedSuggestionCommandIndex >= 0) {
-                if (_suggestedCommands.Count > 0) SetCommandSuggestion(_suggestedCommands[_selectedSuggestionCommandIndex]);
-            }
-            //---Finale End---//
         }
 
         private string FormatSuggestion(CommandData command, bool selected)
@@ -411,14 +424,13 @@ namespace QFSW.QC
             }
 
             _selectedSuggestionCommandIndex = suggestionIndex;
-            //--- Commented out by Finale ---// SetCommandSuggestion(_suggestedCommands[_selectedSuggestionCommandIndex]);
+            SetCommandSuggestion(_suggestedCommands[_selectedSuggestionCommandIndex]);
             ProcessPopupDisplay();
         }
 
         private void SetCommandSuggestion(CommandData command)
         {
-            //--- Changed by Finale---// OverrideConsoleInput(command.CommandName);
-            OverrideConsoleInput(command);
+            OverrideConsoleInput(command.CommandName);
             Color suggestionColor = _theme ? _theme.SuggestionColor : Color.gray;
             _consoleSuggestionText.text = $"{command.CommandName.ColorText(Color.clear)}{command.GenericSignature.ColorText(suggestionColor)} {command.ParameterSignature.ColorText(suggestionColor)}";
         }
@@ -441,20 +453,6 @@ namespace QFSW.QC
 
             OnTextChange();
         }
-        //---Finale Method---//
-        public void OverrideConsoleInput (CommandData command, bool shouldFocus = true) {
-            _currentText = command.CommandName + (command.ParamCount > 0 ? " " : "");
-            _previousText = command.CommandName + (command.ParamCount > 0 ? " " : "");
-            _consoleInput.text = command.CommandName + (command.ParamCount > 0 ? " " : "");
-
-            if (shouldFocus)
-            {
-                FocusConsoleInput();
-            }
-
-            OnTextChange();
-        }
-        //---Finale End---//
 
         /// <summary>
         /// Selects and focuses the input field for the console.
