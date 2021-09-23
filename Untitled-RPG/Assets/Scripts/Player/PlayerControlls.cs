@@ -185,6 +185,9 @@ public class PlayerControlls : MonoBehaviour, ISavable
                 PeaceCanvas.instance.ShowKeySuggestion(KeyCodeDictionary.keys[KeybindsManager.instance.currentKeyBinds["Interact"]], InterractionIcons.Horse);
             }
         }
+        
+        if (!isMounted) return;
+
         if (Input.GetKeyUp(KeybindsManager.instance.currentKeyBinds["Interact"])){
             holdingButton = false;
             PeaceCanvas.instance.HideKeySuggestion();
@@ -286,11 +289,16 @@ public class PlayerControlls : MonoBehaviour, ISavable
         if (overridePosRot) SetOverridePosRot();
     }
 
-    void SetOverridePosRot() {
+    void SetOverridePosRot(bool instant = false) {
         desiredSprintingDirection = 0;
         desiredRollDirection = 0;
-        transform.position = Vector3.MoveTowards(transform.position, overrideTransform ? overrideTransform.position : overridePos, Time.deltaTime * 7f);
-        desiredLookDirection = overrideTransform ? overrideTransform.rotation.eulerAngles.y : overrideRotAngle;
+        if (!instant) {
+            transform.position =  Vector3.MoveTowards(transform.position, overrideTransform ? overrideTransform.position : overridePos, Time.deltaTime * 7f);
+            desiredLookDirection = overrideTransform ? overrideTransform.rotation.eulerAngles.y : overrideRotAngle;
+        } else {
+            transform.position = overrideTransform ? overrideTransform.position : overridePos;
+            lookDirection = overrideTransform ? overrideTransform.rotation.eulerAngles.y : overrideRotAngle;
+        }
     }
 
     public void OverridePosRot (bool _enableOverride) {
@@ -320,6 +328,13 @@ public class PlayerControlls : MonoBehaviour, ISavable
         overridePos = Vector3.zero;
         overrideRotAngle = 0;
         overrideTransform = _overrideTransform;
+    }
+
+    public void InstantOverridePosRot (Transform _overrideTransform) {
+        overridePos = Vector3.zero;
+        overrideRotAngle = 0;
+        overrideTransform = _overrideTransform;
+        SetOverridePosRot(true);
     }
 
     //Animation variables
@@ -605,7 +620,12 @@ public class PlayerControlls : MonoBehaviour, ISavable
 
     public void Save()
     {
-        ES3.Save<Vector3>("pos", transform.position, SaveManager.instance.getCurrentCharacterFolderPath("playerTrans"));
+        for (int i = 0; i < SceneManager.sceneCount; i++) {
+            if (SceneManager.GetSceneAt(i).name == "City") {
+                ES3.Save<Vector3>("pos", transform.position, SaveManager.instance.getCurrentCharacterFolderPath("playerTrans"));
+                return;
+            }
+        }
     }
 
     public void Load()

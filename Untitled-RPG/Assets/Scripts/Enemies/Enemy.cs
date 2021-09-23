@@ -5,15 +5,8 @@ using UnityEngine.AI;
 
 public enum EnemyState {Idle, Approaching, Attacking, Returning, Celebrating, Stunned};
  
-[System.Serializable] public struct Loot {
-    public Item item;
-    public int amount;
-    [Range(0,1)] public float probability;
-    [Range(0,1)] public float amountVariability;
-}
-
 [RequireComponent(typeof (FieldOfView))] [SelectionBase]
-public abstract class Enemy : MonoBehaviour, IDamagable
+public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
 {
     public string enemyName;
     [Header("Stats")]
@@ -29,13 +22,14 @@ public abstract class Enemy : MonoBehaviour, IDamagable
     [Space]
     public Vector3 localEnemyBounds;
     [Header("Loot")]
-    public Loot[] itemsLoot;
+    public RandomLoot loot;
     public int goldLootAmount;
 
     [Header("AI")]
+    [DisplayWithoutEdit] public bool agr; //Agressive - if true, then targets and attacks the player. if false then resting/idling
     [DisplayWithoutEdit] public EnemyState currentState;
     [DisplayWithoutEdit] [SerializeField] protected float distanceToPlayer;
-    [DisplayWithoutEdit] public bool agr; //Agressive - if true, then targets and attacks the player. if false then resting/idling
+    [DisplayWithoutEdit] [SerializeField] protected float distanceToDestination;
     
     [Header("Attack")]
     public bool isCoolingDown;
@@ -62,7 +56,6 @@ public abstract class Enemy : MonoBehaviour, IDamagable
     public ParticleSystem hitParticles;
     public AudioClip[] getHitSounds;
     public AudioClip[] stabSounds;
-    public AudioClip[] stepsSounds;
     public AudioClip[] attackSounds;
 
     protected Animator animator;
@@ -74,6 +67,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable
     protected FieldOfView fieldOfView;
     protected RagdollController ragdollController;
     protected EnemyController enemyController;
+    protected FootstepManager footstepManager;
     protected float baseControllerSpeed;
 
     protected float agrDelay; 
@@ -90,6 +84,8 @@ public abstract class Enemy : MonoBehaviour, IDamagable
         audioSource = GetComponent<AudioSource>();
         fieldOfView = GetComponent<FieldOfView>();
         fieldOfView.InitForEnemy();
+        footstepManager = GetComponentInChildren<FootstepManager>();
+
         currentHealth = maxHealth;
         baseControllerSpeed = enemyController.speed;
 
@@ -105,7 +101,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable
         initialPos = transform.position;
         //if spawned in the air - drop on the floor
         RaycastHit hit;
-        if (Physics.Raycast(initialPos, -Vector3.up, out hit, 10f)) 
+        if (Physics.Raycast(initialPos + Vector3.up, -Vector3.up, out hit, 10f)) 
             initialPos = hit.point + Vector3.up * 0.05f;
     }
 
@@ -124,6 +120,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable
         AttackCoolDown();
 
         distanceToPlayer = fieldOfView.distanceToTarget;
+        if (navAgent) distanceToDestination = navAgent.remainingDistance;
     
         CheckAgr();
     
@@ -168,7 +165,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable
             }
 
         } else if (currentState != EnemyState.Celebrating || ( (Time.time - startedCelebratingTime > celebrationDuration) || distanceToPlayer > 20) ) {
-            currentState = Vector3.Distance(transform.position, initialPos) > enemyController.stoppingDistance ? EnemyState.Returning : EnemyState.Idle;
+            currentState = navAgent.remainingDistance > enemyController.stoppingDistance ? EnemyState.Returning : EnemyState.Idle;
         }
 
         if (isStunned) currentState = EnemyState.Stunned;
@@ -218,11 +215,11 @@ public abstract class Enemy : MonoBehaviour, IDamagable
         FaceTarget(instant);
     }
     protected abstract void FaceTarget (bool instant = false);
+    
     protected virtual void ReturnToPosition() {
         if (PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Contains(this))
             PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Remove(this);
 
-        
         if(navAgent.enabled) {
             navAgent.destination = initialPos;
             navAgent.isStopped = false;
@@ -267,19 +264,6 @@ public abstract class Enemy : MonoBehaviour, IDamagable
         }
     }
 
-    protected virtual void DropLoot () {
-        for (int i = 0; i < itemsLoot.Length; i++) {
-            if (Random.value < itemsLoot[i].probability) {
-                float dropAmount = Random.Range(itemsLoot[i].amount * (1-itemsLoot[i].amountVariability), itemsLoot[i].amount * (1+itemsLoot[i].amountVariability));
-                if (dropAmount <= 0) continue;
-                LootManager.instance.DropItem(itemsLoot[i].item, Mathf.RoundToInt(dropAmount), transform.position);
-            }
-        }
-        if (goldLootAmount > 0) {
-            LootManager.instance.DropGold(goldLootAmount, transform.position);
-        }
-    }
-
     IEnumerator die (){
         yield return new WaitForSeconds (8);
         float x = 0;
@@ -297,8 +281,8 @@ public abstract class Enemy : MonoBehaviour, IDamagable
 
     protected IEnumerator HitStop (bool isCrit) {
         float timeStarted = Time.realtimeSinceStartup;
-        float time = isCrit ? 0.4f : 0.12f;
-        Time.timeScale = 0.3f;
+        float time = isCrit ? 0.3f : 0.12f;
+        Time.timeScale = 0.2f;
         Time.fixedDeltaTime = 0.006f;
         while(Time.realtimeSinceStartup - timeStarted < time) {
             yield return null;
@@ -456,12 +440,18 @@ public abstract class Enemy : MonoBehaviour, IDamagable
     }
 
     public virtual void FootStep () {
-        if (stepsSounds.Length == 0)
+        if (!footstepManager)
             return;
 
-        int playID = Random.Range(0, stepsSounds.Length);
-        audioSource.pitch = 1 + Random.Range(-0.1f, 0.1f);
-        audioSource.PlayOneShot(stepsSounds[playID]);
+        footstepManager.PlayFootstepSound();
+    }
+    public void SetGroundType (GroundType groundType) {
+        if (!footstepManager) footstepManager = GetComponentInChildren<FootstepManager>();
+
+        if (!footstepManager)
+            return;
+
+        footstepManager.currentGroundType = groundType;
     }
 
     public virtual void PlayAttackSound (AnimationEvent animationEvent) {
@@ -502,6 +492,10 @@ public abstract class Enemy : MonoBehaviour, IDamagable
     }
 
     public virtual void OnWeakSpotHit() {}
+
+    void OnValidate() {
+        loot.OnValidate();
+    }
 
 #region IDamagable
 
@@ -586,6 +580,33 @@ public abstract class Enemy : MonoBehaviour, IDamagable
             newEffect.vfx.Play();
         }
         recurringEffects.Add(newEffect);
+    }
+
+#endregion
+
+#region ILootable 
+
+    private bool _canDropLoot = true;
+    public bool canDropLoot {
+        get {
+            return _canDropLoot;
+        }
+        set {
+            _canDropLoot = value;
+        }
+    }
+
+    public virtual void DropLoot () {
+        if (!canDropLoot) return;
+
+        ItemAmountPair[] allLoot = loot.GetLoot();
+        foreach (ItemAmountPair ia in allLoot) {
+            LootManager.instance.DropItem(ia.item1, ia.amount1, transform.position);
+        }
+        
+        if (goldLootAmount > 0) {
+           LootManager.instance.DropGold(goldLootAmount, transform.position);
+        }
     }
 
 #endregion
