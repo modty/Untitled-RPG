@@ -2,63 +2,93 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
+using TMPro;
+using NaughtyAttributes;
 
-public enum EnemyState {Idle, Approaching, Attacking, Returning, Celebrating, Stunned};
- 
+public enum EnemyState {Idle, Approaching, Attacking, Returning, Stunned};
+
+[System.Serializable]
+public struct EnemyAttack {
+    public string attackName;
+    public float attackRange;
+    public float damageMultiplier;
+    public HitType hitType;
+    public int animationID;
+    public float cooldown;
+    public bool disallowRepetition;
+    public bool forceFaceTarget;
+}
+
+
 [RequireComponent(typeof (FieldOfView))] [SelectionBase]
 public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
 {
+    public bool debug;
+    [Space, Space]
+
     public string enemyName;
-    [Header("Stats")]
+    public int damage;
     public int maxHealth;
-    public int currentHealth;
-    public int baseDamage;
-    public float attackRange;
-    public HitType hitType;
+    public EnemyAttack[] attacks;
+    public bool isFriendly;
+
+    [Space]
+    public bool detectKite;
+    [ShowIf("detectKite")] public float kiteDistanceThreashold;
+    [ShowIf("detectKite")] public int attackIndexIfKited = -1;
+    float kiteDurationThreashold = 5;
+    
+    [Space]
+    public bool detectHitAbuse;
+    int hitsAbuseThreashold = 5;
+    float hitAbuseTimeFrame = 3;
+
     [Space]
     public bool immuneToInterrupt;
     public bool immuneToKnockDown;
     public bool immuneToKickBack;
+    
     [Space]
     public Vector3 localEnemyBounds;
+
     [Header("Loot")]
     public RandomLoot loot;
     public int goldLootAmount;
 
     [Header("AI")]
+    [DisplayWithoutEdit] public int currentHealth;
     [DisplayWithoutEdit] public bool agr; //Agressive - if true, then targets and attacks the player. if false then resting/idling
+    [DisplayWithoutEdit, SerializeField] protected float distanceToPlayer;
     [DisplayWithoutEdit] public EnemyState currentState;
-    [DisplayWithoutEdit] [SerializeField] protected float distanceToPlayer;
+    protected EnemyState previousState;
     
-    [Header("Attack")]
-    public bool isCoolingDown;
-    public float attackCoolDown;
+    [Space]
+    [DisplayWithoutEdit] public bool isCoolingDown;
+    [DisplayWithoutEdit, SerializeField] protected float attackCoolDown;
     protected float coolDownTimer;
-    public float agrTime;
     protected float agrTimer;
 
-    [Header("Adjustements from debuffs")]
-    public float TargetSkillDamagePercentage;
+    [System.NonSerialized] public float TargetSkillDamagePercentage;
 
+    [Foldout("States")] public bool isAttacking;
+    [Foldout("States")] public bool isGettingInterrupted;
+    [Foldout("States")] public bool isDead;
+    [Foldout("States")] public bool isKnockedDown;
+    [Foldout("States")] public bool isRagdoll;
+    [Foldout("States")] public bool isStunned;
+    [Foldout("States")] public bool isDefending;
+    [Foldout("States")] public bool isBeingKited;
+    [Foldout("States")] public bool canGetHit = true;
 
-    [Header("States")]
-    public bool isAttacking;
-    public bool isGettingInterrupted;
-    public bool isDead;
-    public bool isKnockedDown;
-    public bool isRagdoll;
-    public bool isStunned;
-    public bool canGetHit = true;
-
-    [Space]
+    [Header("Setup")]
     public GameObject healthBar;
     public ParticleSystem hitParticles;
     public AudioClip[] getHitSounds;
     public AudioClip[] stabSounds;
     public AudioClip[] attackSounds;
+    TextMeshPro hpLabel;
 
     protected Animator animator;
-    protected NavMeshAgent navAgent;
     protected Transform target;
     protected AudioSource audioSource;
     protected Vector3 initialPos;
@@ -67,14 +97,32 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
     protected RagdollController ragdollController;
     protected EnemyController enemyController;
     protected FootstepManager footstepManager;
+    private EnemyAttack _plannedAttack;
+    protected EnemyAttack plannedAttack {
+        get {
+            return _plannedAttack;
+        }
+        set {
+            _plannedAttack = value;
+            attackRange = value.attackRange;
+        }
+    }
+    protected EnemyAttack previousAttack;
     protected float baseControllerSpeed;
 
+    protected float agrTime = 20;
     protected float agrDelay; 
     protected float agrDelayTimer;
     protected bool delayingAgr;
 
     protected float celebrationDuration = 5;
     protected float startedCelebratingTime;
+
+    protected HitType hitType;
+    protected int finalDamage;
+    protected float attackRange;
+
+    protected bool forceFaceTarget;
 
     protected virtual void Start() {
         enemyController = GetComponent<EnemyController>();
@@ -84,6 +132,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         fieldOfView = GetComponent<FieldOfView>();
         fieldOfView.InitForEnemy();
         footstepManager = GetComponentInChildren<FootstepManager>();
+        if (healthBar) hpLabel = healthBar.GetComponentInChildren<TextMeshPro>();
 
         currentHealth = maxHealth;
         baseControllerSpeed = enemyController.speed;
@@ -100,7 +149,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         initialPos = transform.position;
         //if spawned in the air - drop on the floor
         RaycastHit hit;
-        if (Physics.Raycast(initialPos + Vector3.up, -Vector3.up, out hit, 10f)) 
+        if (Physics.Raycast(initialPos + Vector3.up, -Vector3.up, out hit, 10f, LayerMask.GetMask("Terrain, StaticLevel, Default"))) 
             initialPos = hit.point + Vector3.up * 0.05f;
     }
 
@@ -134,6 +183,17 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         RunKnockDowns();
 
         ApplyEnemyControllerSettings();
+
+        SyncAnimator();
+
+        Debug();
+    }
+
+    protected virtual void SyncAnimator() {
+        animator.SetBool("Agr", agr);
+        animator.SetBool("KnockedDown", isKnockedDown);
+        animator.SetBool("Approaching", currentState == EnemyState.Approaching ? true : false);
+        animator.SetBool("Returning", currentState == EnemyState.Returning ? true : false);
     }
 
     protected virtual void ApplyEnemyControllerSettings () {
@@ -145,30 +205,13 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
     protected virtual void AI () {
         if (isDead) return;
 
-        if (fieldOfView.isTargetVisible) {
-            Agr();
+        if (!isFriendly) {
+            if (fieldOfView.isTargetVisible) Agr();
+        } else {
+            if (fieldOfView.isTargetVisible && agr) Agr();
         }
         
-        if (agr) {
-            if (distanceToPlayer > attackRange) {
-                if(!isAttacking) currentState = EnemyState.Approaching;
-            } else {
-                currentState = EnemyState.Attacking;
-            }
-
-            if (Characteristics.instance.isDead && currentState != EnemyState.Celebrating){
-                currentState = EnemyState.Celebrating;
-                startedCelebratingTime = Time.time;
-                agrTimer = -10;
-            }
-
-        } else if (currentState != EnemyState.Celebrating || ( (Time.time - startedCelebratingTime > celebrationDuration) || distanceToPlayer > 20) ) {
-            currentState = (navAgent.isActiveAndEnabled ? navAgent.remainingDistance : Vector3.Distance(navAgent.nextPosition, initialPos))  > enemyController.stoppingDistance ? EnemyState.Returning : EnemyState.Idle;
-        }
-
-        if (isStunned) currentState = EnemyState.Stunned;
-
-        
+        CalculateCurrentState();
 
         if (delayingAgr)
             return;
@@ -183,11 +226,38 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
             TryFaceTarget();
         } else if (currentState == EnemyState.Returning) {
             ReturnToPosition();
-        } else if (currentState == EnemyState.Celebrating) {
-            Celebrate();
         } else if (currentState == EnemyState.Stunned) {
             Stun();
         }
+
+        KiteDetection();
+    }
+
+    protected virtual void CalculateCurrentState () {
+        if (!agr) {
+            if (isAttacking) currentState = EnemyState.Attacking;
+            else currentState = DistanceToInitialPos() >= StoppingDistance() ? EnemyState.Returning : EnemyState.Idle;
+        } else {
+            if (distanceToPlayer > attackRange) currentState = isAttacking ? EnemyState.Attacking : EnemyState.Approaching;
+            else currentState = EnemyState.Attacking;
+
+            if (Characteristics.instance.isDead) {
+                agrTimer = -1;
+            }
+        }
+
+        if (isStunned) currentState = EnemyState.Stunned;
+
+        if (previousState != currentState) OnStateChange();
+        previousState = currentState;
+    }
+    protected virtual void OnStateChange () {}
+
+    protected virtual float DistanceToInitialPos() {
+        return Vector3.Distance(transform.position, initialPos);
+    }
+    protected virtual float StoppingDistance() {
+        return 1;
     }
 
     protected virtual void ApproachTarget() {
@@ -198,39 +268,53 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         if (!PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Contains(this))
             PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Add(this);
 
-        if (isCoolingDown || isDead || isKnockedDown || !fieldOfView.isTargetVisible || isRagdoll)
+        if (!canAttack())
             return;
         
-        if (navAgent.enabled) navAgent.isStopped = true;
-        coolDownTimer = attackCoolDown;
         AttackTarget();
     }
     protected abstract void AttackTarget();
+    protected virtual bool canAttack () {
+        return !(isCoolingDown || isDead || isKnockedDown || !fieldOfView.isTargetVisible || isRagdoll);
+    }
+
     protected virtual void TryFaceTarget(bool instant = false) {
         if (isKnockedDown || isRagdoll) 
             return;
         
         FaceTarget(instant);
     }
-    protected abstract void FaceTarget (bool instant = false);
+    protected virtual void FaceTarget (bool instant = false) {
+        if (blockFaceTarget()) return;
+
+        if (instant) {
+            StartCoroutine(InstantFaceTarget());
+            return;
+        }
+        
+        Vector3 direction = (target.position - transform.position).normalized;
+        Quaternion lookRotation = Quaternion.LookRotation(new Vector3(direction.x, 0, direction.z));
+        transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * 10f);
+
+        FaceTargetExtension();
+    }
+    protected virtual void FaceTargetExtension() {}
+    protected virtual bool blockFaceTarget () {
+        return (isAttacking || isKnockedDown || isRagdoll) && !forceFaceTarget;
+    }
     
     protected virtual void ReturnToPosition() {
-        if (PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Contains(this))
-            PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Remove(this);
+        if (Combat.instanace.enemiesInBattle.Contains(this))
+            Combat.instanace.enemiesInBattle.Remove(this);
 
-        if(navAgent.enabled) {
-            navAgent.destination = initialPos;
-            navAgent.isStopped = false;
-        }
         RegenerateMaxHealth();
     }
     protected virtual void Idle() {
-        if (PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Contains(this))
-            PlayerControlls.instance.GetComponent<Combat>().enemiesInBattle.Remove(this);
+        if (Combat.instanace.enemiesInBattle.Contains(this))
+            Combat.instanace.enemiesInBattle.Remove(this);
 
         RegenerateMaxHealth();
     }
-    protected virtual void Celebrate() {}
     protected virtual void Stun() {}
 
     protected virtual void Health () {
@@ -244,7 +328,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
 
     protected virtual void RegenerateMaxHealth () {
         if (currentHealth < maxHealth)
-            currentHealth = Mathf.RoundToInt(Mathf.MoveTowards(currentHealth, maxHealth, Time.deltaTime * 10f));
+            currentHealth = Mathf.RoundToInt(Mathf.MoveTowards(currentHealth, maxHealth, Time.deltaTime * 2000f));
     }
 
     protected virtual void Die () {
@@ -255,7 +339,6 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         animator.SetBool("isDead", true);
         StartCoroutine(die());
         DropLoot();
-        if (navAgent != null && navAgent.enabled) navAgent.enabled = false;
         if (ragdollController != null) {
             ragdollController.EnableRagdoll();
             ragdollController.blockStopRagdoll = true;  
@@ -273,7 +356,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         Destroy(gameObject);
     }
 
-    protected int calculateActualDamage (int damage) {
+    protected virtual int calculateActualDamage (int damage) {
         return Mathf.RoundToInt( damage * (1 + TargetSkillDamagePercentage/100) );
     }
 
@@ -289,7 +372,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         Time.fixedDeltaTime = 0.02f;
     }
     
-    protected void KnockedDown () {
+    protected virtual void KnockedDown () {
         isKnockedDown = true;
         gettingUp = false;
         timeKnockedDown = Time.time;
@@ -351,6 +434,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
             healthBar.transform.LookAt (healthBar.transform.position + PlayerControlls.instance.playerCamera.transform.rotation * Vector3.back, PlayerControlls.instance.playerCamera.transform.rotation * Vector3.up);
             if (animator.GetBoneTransform(HumanBodyBones.Head) != null) healthBar.transform.position = animator.GetBoneTransform(HumanBodyBones.Head).position + Vector3.up * 0.5f;
             healthBar.SetActive(true);
+            if (hpLabel) hpLabel.text = currentHealth.ToString();
         } else {
             healthBar.SetActive(false);
         }
@@ -384,7 +468,7 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
     }
 
     public virtual void Hit () {
-        DamageInfo enemyDamageInfo = CalculateDamage.enemyDamageInfo(baseDamage, enemyName);
+        DamageInfo enemyDamageInfo = CalculateDamage.enemyDamageInfo(finalDamage, enemyName);
         PlayerControlls.instance.GetComponent<Characteristics>().GetHit(enemyDamageInfo, hitType, 0.2f, 1.5f);
     }
 
@@ -463,12 +547,12 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
     }
 
     float interruptBlockDuration = 10;
-    float accumulatedInterrupsWindow = 7;
+    float accumulatedInterrupsWindow = 10;
     int maxInterruptions = 5;
     float firstInterruptTime;
     int accumulatedInterruptions;
     Coroutine interruptCor;
-    protected void CheckInterruptLimit () {
+    protected virtual void CheckInterruptLimit () {
         if (Time.time - firstInterruptTime > accumulatedInterrupsWindow) {
             accumulatedInterruptions = 0;
             firstInterruptTime = Time.time;
@@ -489,11 +573,132 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
         immuneToInterrupt = false;
     }
 
-    public virtual void OnWeakSpotHit() {}
+    public virtual void OnWeakSpotHit() {
+        Agr();
+    }
 
     void OnValidate() {
         loot.OnValidate();
     }
+
+
+    TextMeshPro debugAIStateLabel;
+    protected virtual void Debug () {
+        if (debug) {
+            if (!debugAIStateLabel) {
+                debugAIStateLabel = new GameObject().AddComponent<TextMeshPro>();
+                debugAIStateLabel.rectTransform.sizeDelta = new Vector2(1.5f, 1f);
+                debugAIStateLabel.transform.SetParent(transform);
+                debugAIStateLabel.fontSize = 1.2f;
+                debugAIStateLabel.color = Color.white;
+                debugAIStateLabel.outlineColor = Color.black;
+                debugAIStateLabel.outlineWidth = 0.2f;
+                debugAIStateLabel.alignment = TextAlignmentOptions.Center;
+                debugAIStateLabel.enableWordWrapping = false;
+                debugAIStateLabel.transform.localScale = new Vector3(-1, 1,1);
+            }
+
+            debugAIStateLabel.transform.position = transform.position + Vector3.up * 2.2f;
+            debugAIStateLabel.transform.LookAt(PlayerControlls.instance.playerCamera.transform);
+            debugAIStateLabel.text = $"<color=#7f7f7f>State: <color=white>{currentState.ToString()}\n" +
+               $"<color=#7f7f7f>Previous: <color=white>{previousAttack.attackName}\n" + 
+               $"<color=#7f7f7f>Next: <color=white>{plannedAttack.attackName}\n" + 
+               $"<color=#7f7f7f>Cooldown: <color=white>{System.Math.Round(coolDownTimer, 1)}"+
+               ExtraDebug();
+        } else {
+            if (debugAIStateLabel) {
+                Destroy(debugAIStateLabel.gameObject);
+            }
+        }
+    }
+    protected virtual string ExtraDebug () {return "";}
+
+    protected virtual EnemyAttack ClosestAttack () {
+        float closestDistance = Mathf.Infinity;
+        EnemyAttack chosenAttack = attacks[0];
+
+        for (int i = 0; i < attacks.Length; i++) {
+            if (attacks[i].disallowRepetition && attacks[i].attackName == previousAttack.attackName) continue;
+            
+            float dis = Mathf.Abs(distanceToPlayer - attacks[i].attackRange);
+            if (dis < closestDistance) {
+                chosenAttack = attacks[i];
+                closestDistance = dis;
+            }
+        }
+
+        return chosenAttack;
+    }
+
+    protected virtual void UseAttack (EnemyAttack attack) {
+        if (attack.animationID >= 0) animator.SetTrigger("Attack");
+        if (attack.animationID >= 0) animator.SetInteger("AttackID", attack.animationID);
+        hitType = attack.hitType;
+        finalDamage = Mathf.RoundToInt(damage * attack.damageMultiplier);
+        coolDownTimer = attack.cooldown;
+        previousAttack = plannedAttack;
+        plannedAttack = ClosestAttack();
+        forceFaceTarget = attack.forceFaceTarget;
+    }
+
+
+    bool suspectedKite;
+    float suspectedKiteTime;
+    protected virtual void KiteDetection () {
+        if (!detectKite) return;
+
+        if (!agr) {
+            isBeingKited = false;
+            suspectedKite = false;
+            return;
+        }
+
+        if (distanceToPlayer > kiteDistanceThreashold) {
+            if (!suspectedKite) {
+                suspectedKite = true;
+                suspectedKiteTime = Time.time;
+            }
+        } else {
+            suspectedKite = false;
+            isBeingKited = false;
+        }
+
+        if (Time.time - suspectedKiteTime > kiteDurationThreashold && suspectedKite) {
+            suspectedKite = false;
+            isBeingKited = true;
+            OnKiteDetected();
+        }
+    }
+
+    protected virtual void OnKiteDetected () {
+        if (attackIndexIfKited >= 0 && canAttack()) UseAttack(attacks[attackIndexIfKited]);
+    }
+
+    int consecutiveHits;
+    float lastHitTime;
+    protected virtual void HitAbuseDetection () {
+        if (!detectHitAbuse) return;
+
+        if (!agr) {
+            consecutiveHits = 0;
+            return;
+        }
+
+        consecutiveHits ++;
+
+        if (Time.time - lastHitTime > hitAbuseTimeFrame) {
+            consecutiveHits = 1;
+        }
+        
+        lastHitTime = Time.time;
+
+        if (consecutiveHits >= hitsAbuseThreashold) {
+            consecutiveHits = 0;
+            OnHitAbuseDetected();
+        }
+    }
+    protected virtual void OnHitAbuseDetected () {}
+
 
 #region IDamagable
 
@@ -544,6 +749,8 @@ public abstract class Enemy : MonoBehaviour, IDamagable, ILootable
 
         string criticalDEBUGtext = damageInfo.isCrit ? " CRITICAL" : "";
         PeaceCanvas.instance.DebugChat($"[{System.DateTime.Now.Hour}:{System.DateTime.Now.Minute}:{System.DateTime.Now.Second}] <color=blue>{enemyName}</color> was hit with<color=red>{criticalDEBUGtext} {actualDamage} {damageInfo.damageType}</color> damage by <color=#80FFFF>{damageInfo.sourceName}</color>.");
+    
+        HitAbuseDetection();
     }
 
     public virtual void RunRecurringEffects () {
